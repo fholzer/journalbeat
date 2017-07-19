@@ -17,6 +17,7 @@ package beater
 import (
 	"strconv"
 	"strings"
+	"os/user"
 
 	"github.com/coreos/go-systemd/sdjournal"
 	"github.com/elastic/beats/libbeat/common"
@@ -52,6 +53,17 @@ func MapStrFromJournalEntry(ev *sdjournal.JournalEntry, cleanKeys bool, convertT
 			m[nk] = nv
 			continue
 		}
+
+		// convert uid to user name if possible
+		if nk == "uid" {
+			if u, err := user.LookupId(v); err == nil {
+				target[nk] = makeNewValue(u.Username, convertToNumbers)
+				continue
+			}
+			nk = makeNewValue(v, false);
+
+		}
+
 		target[nk] = nv
 	}
 
