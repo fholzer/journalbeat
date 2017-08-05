@@ -60,7 +60,7 @@ func MapStrFromJournalEntry(ev *sdjournal.JournalEntry, cleanKeys bool, convertT
 				target[nk] = makeNewValue(u.Username, convertToNumbers)
 				continue
 			}
-			nk = makeNewValue(v, false);
+			nv = makeNewValue(v, false);
 
 		}
 
