@@ -83,10 +83,8 @@ func (jb *Journalbeat) initJournal() error {
 	}
 
 	// add specific units to monitor if any
-	for _, unit := range jb.config.Units {
-		if err = jb.journal.AddMatch(sdjournal.SD_JOURNAL_FIELD_SYSTEMD_UNIT + "=" + unit); err != nil {
-			return fmt.Errorf("Filtering unit %s failed: %v", unit, err)
-		}
+	if err = jb.addUnits(); err != nil {
+		return err
 	}
 
 	// seek position
@@ -177,20 +175,22 @@ func New(b *beat.Beat, cfg *common.Config) (beat.Beater, error) {
 		return nil, err
 	}
 
+	jb.client = b.Publisher.Connect()
 	return jb, nil
 }
 
 // Run is the main event loop: read from journald and pass it to Publish
 func (jb *Journalbeat) Run(b *beat.Beat) error {
+	publishedChan := make(chan bool, 1)
 	logp.Info("Journalbeat is running!")
 	defer func() {
+		_ = jb.client.Close()
 		_ = jb.journal.Close()
 		close(jb.cursorChan)
+		close(jb.completed)
 		close(jb.pending)
 		jb.wg.Wait()
 	}()
-
-	jb.client = b.Publisher.Connect()
 
 	go jb.managePendingQueueLoop()
 
@@ -219,12 +219,17 @@ func (jb *Journalbeat) Run(b *beat.Beat) error {
 		event["@realtime_timestamp"] = int64(rawEvent.RealtimeTimestamp)
 
 		ref := &eventReference{rawEvent.Cursor, event}
-		if jb.client.PublishEvent(event, publisher.Signal(&eventSignal{ref, jb.completed}), publisher.Guaranteed) {
-			jb.pending <- ref
+		select {
+		case <-jb.done:
+			return nil
+		case publishedChan <- jb.client.PublishEvent(event, publisher.Signal(&eventSignal{ref, jb.completed}), publisher.Guaranteed):
+			if published := <-publishedChan; published {
+				jb.pending <- ref
 
-			// save cursor
-			if jb.config.WriteCursorState {
-				jb.cursorChan <- rawEvent.Cursor
+				// save cursor
+				if jb.config.WriteCursorState {
+					jb.cursorChan <- rawEvent.Cursor
+				}
 			}
 		}
 	}
@@ -235,6 +240,4 @@ func (jb *Journalbeat) Run(b *beat.Beat) error {
 func (jb *Journalbeat) Stop() {
 	logp.Info("Stopping Journalbeat")
 	close(jb.done)
-	_ = jb.client.Close()
-	close(jb.completed)
 }
